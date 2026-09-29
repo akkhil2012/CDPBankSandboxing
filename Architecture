@@ -1,0 +1,851 @@
+Absolutely. Based on your concept, I would make the demo **small enough to build in 1–2 days but visually strong enough for leadership/conference audiences**.
+
+The best scenario from your material is a **Banking Agent Identity Governance Demo** because it lets you demonstrate the distinction between **identity governance and sandbox security** with very concrete business actions. Your source already defines this pattern around a triage agent and specialist agents for fraud, offers, and account servicing. 
+
+# Demo Project: "GovernedBank AI"
+
+### Tagline
+
+> **Can an AI agent prove who it is, who authorized it, and whether it is still allowed to act?**
+
+---
+
+## 1. The business scenario
+
+Imagine a bank has an AI assistant called **Banking Copilot**.
+
+A customer asks:
+
+> **"I see a suspicious transaction. Can you investigate it and tell me whether I should dispute it?"**
+
+The AI should be able to:
+
+1. Understand the request.
+2. Delegate the investigation to a Fraud Agent.
+3. Allow the Fraud Agent to read the customer's transactions.
+4. Allow it to access fraud-case information.
+5. Prevent it from accessing unrelated customer information.
+6. Prevent it from changing the customer's account.
+7. Maintain the complete delegation chain.
+8. Allow an administrator to revoke the agent's authority while it is running.
+
+This gives you a realistic reason for having **multiple agents + identity + authorization + sandbox + audit**.
+
+---
+
+# 2. Your architecture
+
+I'd build this:
+
+```text
+                    ┌─────────────────────┐
+                    │     USER / CxO      │
+                    │ "Investigate my     │
+                    │ suspicious charge"  │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │    Triage Agent     │
+                    │                     │
+                    │ Intent Detection    │
+                    │ Risk Classification │
+                    └──────────┬──────────┘
+                               │
+                     Delegation Request
+                               │
+                               ▼
+              ┌────────────────────────────────┐
+              │   IDENTITY GOVERNANCE LAYER    │
+              │                                │
+              │ Identity                       │
+              │ Delegation                     │
+              │ Capability                     │
+              │ Policy                         │
+              │ Provenance                     │
+              │ Revocation                     │
+              └───────────────┬────────────────┘
+                              │
+                       Authorized?
+                       /           \
+                     YES            NO
+                      │              │
+                      ▼              ▼
+              ┌────────────┐      DENY
+              │ Fraud      │
+              │ Agent      │
+              └─────┬──────┘
+                    │
+             Tool invocation
+                    │
+                    ▼
+          ┌──────────────────────┐
+          │   SANDBOX / MCP      │
+          │                      │
+          │ Filesystem           │
+          │ Process              │
+          │ Network              │
+          │ Runtime Policy       │
+          └──────────┬───────────┘
+                     │
+                     ▼
+              Banking APIs
+```
+
+The important architectural separation comes directly from your source:
+
+**Identity Governance → "Should this agent be allowed to perform this action?"**
+
+**Sandbox → "Can this process technically perform this action?"** 
+
+---
+
+# 3. Give every agent a different identity
+
+This makes the demo much more compelling.
+
+### Human
+
+```text
+user_id = customer-1001
+```
+
+### Triage Agent
+
+```text
+agent_id = triage-agent
+capabilities =
+    intent.classify
+    fraud.delegate
+    offers.delegate
+```
+
+### Fraud Agent
+
+```text
+agent_id = fraud-agent
+capabilities =
+    transaction.read
+    fraud_case.read
+```
+
+### Offers Agent
+
+```text
+agent_id = offers-agent
+capabilities =
+    offers.read
+    segment.read
+```
+
+### Account Agent
+
+```text
+agent_id = account-agent
+capabilities =
+    account.read
+    account.update
+```
+
+Now you can demonstrate **least privilege**.
+
+---
+
+# 4. The most important feature: delegation
+
+The customer doesn't directly call the Fraud Agent.
+
+Instead:
+
+```text
+Customer
+   │
+   │ request
+   ▼
+Triage Agent
+   │
+   │ delegates
+   ▼
+Fraud Agent
+   │
+   │ requests
+   ▼
+Transaction API
+```
+
+The governance system records:
+
+```json
+{
+  "originator": "customer-1001",
+  "current_agent": "fraud-agent",
+  "delegated_by": "triage-agent",
+  "purpose": "fraud-investigation",
+  "action": "transaction.read",
+  "resource": "customer-1001",
+  "decision": "ALLOW"
+}
+```
+
+This directly demonstrates your **provenance** concept. 
+
+---
+
+# 5. Demo Scenario #1 — Normal operation
+
+Start your demo with a completely legitimate request.
+
+### User
+
+> "Investigate my suspicious $500 transaction."
+
+### Flow
+
+```text
+USER
+ │
+ ▼
+Triage Agent
+ │
+ │ Intent = FRAUD
+ ▼
+Fraud Agent
+ │
+ │ transaction.read
+ ▼
+Governance
+ │
+ │ ALLOW
+ ▼
+Transaction API
+ │
+ ▼
+Fraud result
+```
+
+On your UI show:
+
+```text
+IDENTITY GOVERNANCE
+
+Originator       customer-1001
+Agent            fraud-agent
+Delegated by     triage-agent
+
+Purpose          fraud-investigation
+Action           transaction.read
+Resource         customer-1001
+
+Decision         ✓ ALLOW
+```
+
+This establishes the baseline.
+
+---
+
+# 6. Demo Scenario #2 — Agent tries to cross its boundary
+
+Now create your **"wow" moment**.
+
+Fraud Agent attempts:
+
+> `customer.profile.update`
+
+But Fraud Agent only has:
+
+```text
+transaction.read
+fraud_case.read
+```
+
+Governance evaluates:
+
+```text
+Requested capability:
+customer.profile.update
+
+Granted capabilities:
+transaction.read
+fraud_case.read
+```
+
+Result:
+
+# 🚫 DENIED
+
+And show:
+
+```text
+POLICY VIOLATION
+
+Agent:
+fraud-agent
+
+Requested:
+customer.profile.update
+
+Reason:
+Capability not delegated
+
+Origin:
+customer-1001
+
+Delegated by:
+triage-agent
+
+Decision:
+DENY
+```
+
+This demonstrates your principle:
+
+> **Confidence doesn't create authority.**
+
+Even if the model says:
+
+> "I am 99% confident this update is necessary."
+
+The infrastructure says:
+
+> **DENY.**
+
+---
+
+# 7. Demo Scenario #3 — Confused Deputy
+
+This should be your **signature scenario**.
+
+Give:
+
+```text
+Fraud Agent
+   ↓
+asks
+   ↓
+Account Agent
+```
+
+The Fraud Agent says:
+
+> "Please update this customer's risk profile."
+
+Account Agent has broader privileges.
+
+Without provenance:
+
+```text
+Account Agent
+      ↓
+"Authorized?"
+      ↓
+YES
+```
+
+Potentially dangerous.
+
+With your governance layer:
+
+```text
+Original User
+     ↓
+Triage Agent
+     ↓
+Fraud Agent
+     ↓
+Account Agent
+```
+
+Governance evaluates the **entire chain**.
+
+```text
+Account Agent capability:
+account.update = YES
+
+BUT
+
+Delegated authority from Fraud Agent:
+account.update = NO
+
+FINAL DECISION:
+DENY
+```
+
+This visually demonstrates the **confused deputy problem** described in your source. 
+
+---
+
+# 8. Demo Scenario #4 — Tool-chain escalation
+
+This is another excellent leadership demonstration.
+
+Give an agent two legitimate permissions:
+
+```text
+Tool A
+transaction.read
+
+Tool B
+email.send
+```
+
+Individually:
+
+```text
+transaction.read  → ALLOW
+
+email.send        → ALLOW
+```
+
+But the agent attempts:
+
+```text
+READ
+customer transactions
+       │
+       ▼
+Extract sensitive information
+       │
+       ▼
+SEND
+to external destination
+```
+
+Your governance engine should evaluate the **workflow context**, not merely each API call.
+
+```text
+READ → ALLOW
+
+EXTERNAL SEND
+      ↓
+Workflow policy
+      ↓
+Sensitive data leaving boundary
+      ↓
+🚫 DENY
+```
+
+This illustrates why your architecture proposes workflow-level policy evaluation. 
+
+---
+
+# 9. Demo Scenario #5 — Mid-session revocation
+
+This could be the strongest demo moment.
+
+Start an agent:
+
+```text
+Fraud Agent
+     │
+     ▼
+Capability:
+transaction.read
+     │
+     ▼
+ALLOW
+```
+
+Now, while the agent is running, click:
+
+### **REVOKE AGENT**
+
+Your UI shows:
+
+```text
+ADMIN ACTION
+
+Revoking:
+
+fraud-agent
+
+Capability:
+
+transaction.read
+```
+
+Then the agent tries:
+
+```text
+transaction.read
+```
+
+Governance:
+
+```text
+Identity:
+fraud-agent
+
+Credential:
+VALID
+
+Current authority:
+REVOKED
+
+Decision:
+
+🚫 DENY
+```
+
+And the key point:
+
+> **The agent code did not change. The sandbox did not change. The authorization decision changed.**
+
+That's a very powerful way to explain **dynamic authorization**.
+
+Your source explicitly includes this mid-session revocation scenario. 
+
+---
+
+# 10. Put OpenShell/sandbox into one scenario
+
+You don't need to make OpenShell the entire project.
+
+Use it to demonstrate the **second security boundary**.
+
+Suppose:
+
+```text
+Fraud Agent
+     │
+     ▼
+Attempts filesystem access
+     │
+     ▼
+Sandbox Policy
+     │
+     ▼
+🚫 BLOCKED
+```
+
+Your leadership explanation:
+
+> "The identity layer determined whether the agent has authority. The sandbox determines what the process can actually touch."
+
+This is exactly the complementary positioning recommended in your source. 
+
+---
+
+# 11. Your demo UI
+
+I would make the UI look like an **AI Security Operations Console**, not a developer dashboard.
+
+### Left side
+
+**Agent Graph**
+
+```text
+Customer
+   │
+   ▼
+Triage Agent
+   │
+   ├──── Fraud Agent
+   │
+   ├──── Offers Agent
+   │
+   └──── Account Agent
+```
+
+### Center
+
+**Current Agent**
+
+```text
+FRAUD AGENT
+
+Identity
+fraud-agent
+
+Parent
+triage-agent
+
+Originator
+customer-1001
+
+Purpose
+fraud-investigation
+
+Capabilities
+✓ transaction.read
+✓ fraud_case.read
+✗ account.update
+✗ customer.export
+```
+
+### Right side
+
+**Policy Decision**
+
+```text
+ACTION REQUEST
+
+transaction.read
+
+RESOURCE
+
+customer-1001
+
+DECISION
+
+✓ ALLOW
+```
+
+or
+
+```text
+ACTION REQUEST
+
+account.update
+
+DECISION
+
+🚫 DENY
+
+Reason:
+
+Capability not delegated
+```
+
+---
+
+# 12. Bottom of the screen — Audit Graph
+
+Show a real-time stream:
+
+```text
+22:41:03  Customer request
+22:41:04  Triage Agent authenticated
+22:41:04  Fraud Agent delegated
+22:41:05  transaction.read → ALLOW
+22:41:06  fraud_case.read → ALLOW
+22:41:08  account.update → DENY
+22:41:10  Admin revoked fraud-agent
+22:41:11  transaction.read → DENY
+```
+
+Now you're not just showing a chatbot.
+
+You're showing:
+
+# **Governed Autonomous AI**
+
+---
+
+# 13. Technology stack
+
+Given the technologies you've already been working with, I'd keep it relatively simple:
+
+```text
+Frontend
+React / Next.js
+       │
+       ▼
+Agent Orchestrator
+Python / FastAPI
+       │
+       ├───────────────┐
+       ▼               ▼
+Triage Agent       Governance Engine
+                       │
+                       ├── Identity
+                       ├── Capability
+                       ├── Policy
+                       ├── Delegation
+                       ├── Revocation
+                       └── Audit
+       │
+       ▼
+MCP Tool Server
+       │
+       ▼
+Sandbox
+       │
+       ▼
+Mock Banking APIs
+```
+
+For the first version, **do not build a sophisticated banking backend**.
+
+Use mock APIs:
+
+```text
+GET /customer/{id}
+
+GET /transactions/{id}
+
+GET /fraud-cases/{id}
+
+GET /offers/{id}
+
+PATCH /customer/{id}
+
+POST /campaign
+```
+
+The governance layer is the product.
+
+---
+
+# 14. Your policy engine
+
+Keep policies understandable.
+
+For example:
+
+```yaml
+agent: fraud-agent
+
+capabilities:
+  - transaction.read
+  - fraud_case.read
+
+resources:
+  customer_scope: requesting_customer
+
+actions:
+  account.update: DENY
+  customer.export: DENY
+
+delegation:
+  allowed: false
+
+credential:
+  ttl: 300
+```
+
+And:
+
+```yaml
+agent: account-agent
+
+capabilities:
+  - account.read
+  - account.update
+
+constraints:
+  customer_scope: requesting_customer
+
+requires_provenance: true
+```
+
+Now your demo can visibly show:
+
+**Policy → Decision → Enforcement → Audit**
+
+---
+
+# 15. The "executive demo script"
+
+I'd structure your actual presentation around **one customer request**.
+
+### Minute 1 — Normal
+
+> "I want to investigate a suspicious transaction."
+
+Agent successfully performs the investigation.
+
+**ALLOW**
+
+---
+
+### Minute 2 — Boundary violation
+
+Fraud Agent attempts to update the customer's account.
+
+**DENY**
+
+You say:
+
+> "The model is allowed to reason about the action. It is not allowed to authorize itself."
+
+---
+
+### Minute 3 — Confused deputy
+
+Fraud Agent asks Account Agent to perform the operation.
+
+**DENY**
+
+You say:
+
+> "The downstream agent cannot inherit privileges that weren't delegated through the original authority chain."
+
+---
+
+### Minute 4 — Revocation
+
+Administrator clicks:
+
+**REVOKE**
+
+Agent attempts another transaction lookup.
+
+**DENY**
+
+You say:
+
+> "The agent is still running. Its code hasn't changed. Only its authority has changed."
+
+---
+
+### Minute 5 — Audit
+
+Show:
+
+```text
+Human
+ ↓
+Triage Agent
+ ↓
+Fraud Agent
+ ↓
+Tool
+ ↓
+Policy
+ ↓
+Decision
+```
+
+Then deliver your final message:
+
+> **"This is the missing control plane for autonomous AI: identity, delegation, authorization and accountability."**
+
+---
+
+# 16. What I would call the project
+
+For your leadership/conference positioning, I'd avoid a generic name like `AgentIAM`.
+
+A few possibilities:
+
+### **GovernedBank**
+
+Simple, easy to understand.
+
+### **AgentTrust**
+
+Focuses on agent authority.
+
+### **AgentGov**
+
+Direct and executive-friendly.
+
+### **DelegationGuard**
+
+Highlights your differentiation.
+
+### **Agent Authority Control Plane**
+
+More enterprise/product oriented.
+
+My preferred presentation title would be:
+
+# **Agent Authority: Identity Governance for Autonomous AI**
+
+And the demo subtitle:
+
+> **A live demonstration of identity, delegation, authorization, sandbox enforcement and revocation across multi-agent banking workflows.**
+
+That gives you a project that is **small enough to actually build**, while demonstrating essentially every important concept in your source: agent identity, delegation, least privilege, continuous authorization, provenance, sandboxing, confused deputy, workflow escalation and revocation. 
+
+If you're building this for your **NVIDIA/OpenShell + AI governance positioning**, I would make **Scenario #3 (Confused Deputy) + Scenario #5 (Mid-session Revocation)** the two headline demos. They communicate the architectural difference much more clearly than a generic "AI blocked a bad prompt" demo.
